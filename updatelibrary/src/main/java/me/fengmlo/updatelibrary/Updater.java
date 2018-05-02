@@ -32,6 +32,7 @@ import java.util.Locale;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import rx.android.schedulers.AndroidSchedulers;
+import rx.exceptions.Exceptions;
 import rx.functions.Action1;
 import rx.functions.Func1;
 import rx.schedulers.Schedulers;
@@ -189,7 +190,11 @@ public class Updater {
                 .map(new Func1<Response, File>() {
                     @Override
                     public File call(Response response) {
-                        return saveFile(response, context);
+                        try {
+                            return saveFile(response, context);
+                        } catch (IOException e) {
+                            throw Exceptions.propagate(e);
+                        }
                     }
                 })
                 .subscribeOn(Schedulers.io())
@@ -200,18 +205,36 @@ public class Updater {
                         if (file != null) {
                             install(context, file, isForce);
                         } else {
-                            Toast.makeText(context, "下载文件出错", Toast.LENGTH_SHORT).show();
+                            downloadFail(context, isForce);
                         }
                     }
                 }, new Action1<Throwable>() {
                     @Override
                     public void call(Throwable throwable) {
                         throwable.printStackTrace();
+                        downloadFail(context, isForce);
                     }
                 });
     }
 
-    private static File saveFile(Response response, Context context) {
+    private static void downloadFail(Context context, final boolean isForce) {
+        AlertDialog dialog;
+        if (downloadDialog != null && (dialog = downloadDialog.get()) != null) {
+            dialog.dismiss();
+        }
+        Toast.makeText(context, isForce ? "下载文件出错，即将退出" : "下载文件出错", Toast.LENGTH_SHORT).show();
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isForce) {
+                    System.exit(0);
+                }
+            }
+        }, 2000);
+
+    }
+
+    private static File saveFile(Response response, Context context) throws IOException {
         ResponseBody responseBody = response.body();
         ensureExternalCacheDir(context);
         File appFile = new File(context.getExternalCacheDir(), context.getPackageName() + ".apk");
@@ -229,6 +252,7 @@ public class Updater {
             return appFile;
         } catch (IOException e) {
             e.printStackTrace();
+            throw e;
         } finally {
             try {
                 if (inputStream != null) {
@@ -243,7 +267,6 @@ public class Updater {
             } catch (Exception ignored) {
             }
         }
-        return null;
     }
 
     private static void install(Context context, File file, boolean force) {
